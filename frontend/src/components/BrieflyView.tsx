@@ -20,40 +20,49 @@ export const BrieflyView: React.FC<{ data: BriefingData }> = ({ data }) => {
     return (
         <div className="w-full max-w-4xl mx-auto animate-fade-in pb-20">
 
-            {/* Video Section */}
-            <div className="relative aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl mb-8 group border border-white/5">
-                <video
-                    ref={videoRef}
-                    src={data.video_url}
-                    className="w-full h-full object-cover"
-                    onEnded={() => setIsPlaying(false)}
-                    controls
-                    playsInline
-                />
+            {/* Video Section - Only show if video exists */}
+            {data.video_url && (
+                <div className="relative aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl mb-8 group border border-white/5">
+                    <video
+                        ref={videoRef}
+                        src={data.video_url}
+                        className="w-full h-full object-cover"
+                        onEnded={() => setIsPlaying(false)}
+                        controls
+                        playsInline
+                    />
 
-                {/* Overlay Controls - Only visible when paused or hovering, allows clicking through to controls */}
-                <div className={clsx(
-                    "absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity duration-300 pointer-events-none",
-                    isPlaying ? "opacity-0 group-hover:opacity-100" : "opacity-100"
-                )}>
-                    <button
-                        onClick={togglePlay}
-                        className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform pointer-events-auto"
-                    >
-                        {isPlaying ? (
-                            <Pause className="w-8 h-8 text-white fill-current" />
-                        ) : (
-                            <Play className="w-8 h-8 text-white fill-current ml-1" />
-                        )}
-                    </button>
-                </div>
+                    {/* Overlay Controls - Only visible when paused or hovering, allows clicking through to controls */}
+                    <div className={clsx(
+                        "absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity duration-300 pointer-events-none",
+                        isPlaying ? "opacity-0 group-hover:opacity-100" : "opacity-100"
+                    )}>
+                        <button
+                            onClick={togglePlay}
+                            className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform pointer-events-auto"
+                        >
+                            {isPlaying ? (
+                                <Pause className="w-8 h-8 text-white fill-current" />
+                            ) : (
+                                <Play className="w-8 h-8 text-white fill-current ml-1" />
+                            )}
+                        </button>
+                    </div>
 
-                {/* Live Indicator */}
-                <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 bg-red-600/90 backdrop-blur rounded-full text-xs font-bold uppercase tracking-wider">
-                    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                    Live Update
+                    {/* Live Indicator */}
+                    <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 bg-red-600/90 backdrop-blur rounded-full text-xs font-bold uppercase tracking-wider">
+                        <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                        Live Update
+                    </div>
                 </div>
-            </div>
+            )}
+
+            {/* Media Carousel - Under Video */}
+            {data.media && data.media.length > 0 && (
+                <div className="mb-8">
+                    <MediaCarousel media={data.media} />
+                </div>
+            )}
 
             {/* Podcast Audio Player */}
             {data.audio_url && (

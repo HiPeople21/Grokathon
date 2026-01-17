@@ -216,6 +216,8 @@ async def websocket_briefing(websocket: WebSocket):
         init_msg = await websocket.receive_json()
         topic = init_msg.get("topic") if isinstance(init_msg, dict) else None
         location = init_msg.get("location", "worldwide") if isinstance(init_msg, dict) else "worldwide"
+        should_generate_audio = init_msg.get("generateAudio", True) if isinstance(init_msg, dict) else True
+        should_generate_video = init_msg.get("generateVideo", False) if isinstance(init_msg, dict) else False
 
         if not topic:
             await websocket.send_json({"type": "error", "message": "topic is required"})
@@ -228,17 +230,19 @@ async def websocket_briefing(websocket: WebSocket):
             return
 
         # Send status that we're starting generation
-        await websocket.send_json({
-            "type": "status",
-            "content": f"Starting briefing generation for '{topic}' ({location})..."
-        })
+        # (moved inside generator to maintain proper queue ordering)
 
-        def run_briefing():
+        def run_briefing(enable_audio, enable_video):
+            yield {"type": "status", "content": f"Starting briefing generation for '{topic}' ({location})...\n"}
+            
             chat = client.chat.create(
                 model="grok-4-1-fast",
                 tools=[x_search(enable_image_understanding=True, enable_video_understanding=True)],
                 include=["verbose_streaming"],
             )
+            
+            # Immediately send a status to confirm connection is working
+            yield {"type": "status", "content": "Connected to Grok AI...\n"}
 
             prompt_text = f"""You are a news analyst covering news from {location}. Search X for images about {location}. Return ONLY valid JSON with this structure:
 {{
@@ -333,81 +337,79 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
             # Filter out X videos before sending result
             filtered_content = filter_x_videos(content)
             
-            # ✅ GENERATE SCRIPT AND AUDIO synchronously before sending result
+            # ✅ GENERATE AUDIO (if enabled)
             audio_url = ""
             try:
-                print("DEBUG: Starting script generation...", file=sys.stderr, flush=True)
-                yield {"type": "status", "content": "🎙️ Generating podcast script...\n"}
-                
-                briefing_json = json.loads(filtered_content)
-                script_segments = create_script_from_briefing(briefing_json)
-                
-                if script_segments:
-                    print(f"DEBUG: Generated {len(script_segments)} script segments", file=sys.stderr, flush=True)
-                    yield {"type": "status", "content": "🎵 Generating audio (this may take a minute)...\n"}
+                if enable_audio:
+                    yield {"type": "status", "content": "🎙️ Generating podcast script...\n"}
                     
-                    filename = f"podcast_{uuid.uuid4().hex}.wav"
+                    briefing_json = json.loads(filtered_content)
+                    script_segments = create_script_from_briefing(briefing_json)
                     
-                    # Run async generate_audio in sync context
-                    import asyncio
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    audio_path = loop.run_until_complete(generate_audio(script_segments, filename))
-                    loop.close()
-                    
-                    audio_url = f"http://localhost:8000{audio_path}"
-                    print(f"DEBUG: Audio generated: {audio_url}", file=sys.stderr, flush=True)
-                    
-                    # Inject audio_url into the briefing JSON
-                    briefing_json["audio_url"] = audio_url
-                    
-                    # ✅ GENERATE VIDEO (after audio)
-                    print(f"DEBUG: Audio complete. Starting video generation...", file=sys.stderr, flush=True)
-                    yield {"type": "status", "content": "🎬 Generating video segments (this will take a few minutes)...\n"}
-                    
-                    # Run synchronous video generation
-                    # Ideally this should be async or threaded better, but sticking to simple sync integration for now
-                    # We can yield intermediate status if we modify generate_videos, but for now just yield "working on it"
-                    
-                    try:
-                        # 1. Generate individual clips
-                        video_urls = generate_videos(script_segments)
+                    if script_segments:
+                        yield {"type": "status", "content": "🎵 Generating audio (this may take a minute)...\n"}
                         
-                        # 2. Combine them
-                        yield {"type": "status", "content": "🎞️ Combining video segments...\n"}
-                        final_video_filename = f"briefing_{uuid.uuid4().hex}.mp4"
-                        final_video_path = combine_videos(video_urls, output_filename=final_video_filename)
+                        filename = f"podcast_{uuid.uuid4().hex}.wav"
                         
-                        if final_video_path:
-                            # Parse filename from path to construct URL
-                            # combine_videos returns string path like "videos/briefing_xxx.mp4" (relative?) 
-                            # or absolute? It returns `output_path` which is "videos/xxx.mp4"
+                        # Run async generate_audio in sync context
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        audio_path = loop.run_until_complete(generate_audio(script_segments, filename))
+                        loop.close()
+                        
+                        audio_url = f"http://localhost:8000{audio_path}"
+                        
+                        # Inject audio_url into the briefing JSON
+                        briefing_json = json.loads(filtered_content)
+                        briefing_json["audio_url"] = audio_url
+                        filtered_content = json.dumps(briefing_json)
+                        
+            except Exception as e:
+                # Don't fail the whole request, just log and continue without audio
+                import traceback
+                traceback.print_exc()
+            
+            # ✅ GENERATE VIDEO (if enabled)
+            try:
+                if enable_video:
+                    briefing_json = json.loads(filtered_content)
+                    script_segments = create_script_from_briefing(briefing_json)
+                    
+                    if script_segments:
+                        yield {"type": "status", "content": "🎬 Generating video segments (this will take a few minutes)...\n"}
+                        
+                        try:
+                            # 1. Generate individual clips
+                            video_urls = generate_videos(script_segments)
                             
-                            # Just use the filename we passed
-                            video_url = f"http://localhost:8000/videos/{final_video_filename}"
-                            briefing_json["video_url"] = video_url
-                            print(f"DEBUG: Final video ready at: {video_url}", file=sys.stderr, flush=True)
+                            # 2. Combine them
+                            yield {"type": "status", "content": "🎞️ Combining video segments...\n"}
+                            final_video_filename = f"briefing_{uuid.uuid4().hex}.mp4"
+                            final_video_path = combine_videos(video_urls, output_filename=final_video_filename)
                             
-                            # Also emit a specific event for video ready if needed, 
-                            # but sending it in the final result is the primary way
-                            yield {"type": "video_ready", "url": video_url}
-                        else:
-                            print("DEBUG: Video combination failed or returned None", file=sys.stderr, flush=True)
+                            if final_video_path:
+                                # Just use the filename we passed
+                                video_url = f"http://localhost:8000/videos/{final_video_filename}"
+                                briefing_json["video_url"] = video_url
+                                
+                                # Also emit a specific event for video ready if needed
+                                yield {"type": "video_ready", "url": video_url}
                             
-                    except Exception as vid_err:
-                        print(f"DEBUG: Error in video generating: {vid_err}", file=sys.stderr, flush=True)
-                        import traceback
-                        traceback.print_exc()
-                        yield {"type": "status", "content": "⚠️ Video generation failed, skipping.\n"}
+                        except Exception as vid_err:
+                            import traceback
+                            traceback.print_exc()
+                            yield {"type": "status", "content": "⚠️ Video generation failed, skipping.\n"}
 
-                    # Update content with all URLs
-                    filtered_content = json.dumps(briefing_json)
-                    
-                else:
-                    print("DEBUG: No script segments generated", file=sys.stderr, flush=True)
+                        # Update content with all URLs
+                        filtered_content = json.dumps(briefing_json)
                     
             except Exception as e:
-                print(f"DEBUG: Error in script/audio generation: {e}", file=sys.stderr, flush=True)
+                # Don't fail the whole request, just log and continue without video
+                import traceback
+                traceback.print_exc()
+                    
+            except Exception as e:
                 # Don't fail the whole request, just log and continue without audio
                 import traceback
                 traceback.print_exc()
@@ -424,7 +426,7 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
         
         def generator_thread():
             try:
-                for message in run_briefing():
+                for message in run_briefing(should_generate_audio, should_generate_video):
                     message_queue.put(("message", message))
             except Exception as e:
                 message_queue.put(("error", str(e)))
@@ -437,11 +439,14 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
         try:
             while True:
                 try:
-                    msg_type, data = message_queue.get(timeout=0.1)
+                    msg_type, data = message_queue.get(timeout=0.01)
                     
                     if msg_type == "message":
                         if websocket.client_state.value == 1:
                             await websocket.send_json(data)
+                            # Force immediate send with small delay to prevent buffering
+                            import asyncio
+                            await asyncio.sleep(0.001)
                     elif msg_type == "error":
                         await websocket.send_json({"type": "error", "message": data})
                         break
@@ -451,6 +456,12 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
                 except queue.Empty:
                     if websocket.client_state.value != 1:
                         break
+                    # Small sleep to yield to event loop
+                    import asyncio
+                    try:
+                        await asyncio.sleep(0.001)
+                    except:
+                        pass
                     continue
                     
         except Exception as send_err:
@@ -461,7 +472,6 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
     except WebSocketDisconnect:
         return
     except Exception as e:
-        print(f"DEBUG: Error in websocket: {str(e)}", file=sys.stderr, flush=True)
         import traceback
         traceback.print_exc()
         try:

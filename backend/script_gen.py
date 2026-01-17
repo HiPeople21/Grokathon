@@ -41,6 +41,7 @@ Editorial rules:
 
 
 def build_user_prompt(info: dict) -> str:
+<<<<<<< HEAD
     # Helper function to convert items to strings
     def to_string_list(items):
         if not items:
@@ -53,6 +54,15 @@ def build_user_prompt(info: dict) -> str:
             else:
                 result.append(str(item))
         return "\n- ".join(result)
+=======
+    # Extract text from confirmed_facts (handle both string and object formats)
+    confirmed_facts_text = []
+    for fact in info["confirmed_facts"]:
+        if isinstance(fact, dict):
+            confirmed_facts_text.append(fact.get("text", ""))
+        else:
+            confirmed_facts_text.append(fact)
+>>>>>>> f3ab69ee16f30a8bb8687a05260fed09cacfebfd
     
     return f"""
 You are given verified, structured information about current global events.

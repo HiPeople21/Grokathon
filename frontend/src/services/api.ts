@@ -115,6 +115,8 @@ export const streamBriefing = (
     topic: BriefingTopic,
     location: BriefingLocation,
     handlers: {
+        generateAudio?: boolean;
+        generateVideo?: boolean;
         onChunk?: (chunk: string) => void;
         onResult?: (data: BriefingData) => void;
         onError?: (message: string) => void;
@@ -126,7 +128,12 @@ export const streamBriefing = (
 
     ws.onopen = () => {
         handlers.onChunk?.('Connected. Warming up Grok...\n');
-        ws.send(JSON.stringify({ topic, location }));
+        ws.send(JSON.stringify({ 
+            topic, 
+            location,
+            generateAudio: handlers.generateAudio ?? true,
+            generateVideo: handlers.generateVideo ?? false
+        }));
     };
 
     ws.onmessage = (event) => {
