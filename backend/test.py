@@ -16,7 +16,8 @@ def generate_video(prompt):
         url = "https://api.x.ai/v1/videos/generations"
         payload = {
             "prompt": prompt,
-            "model": "grok-imagine-video-a2"
+            "model": "grok-imagine-video-a2",
+            "duration": 15
         }
 
         headers = {

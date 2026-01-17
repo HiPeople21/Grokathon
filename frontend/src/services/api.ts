@@ -1,72 +1,5 @@
 import { BriefingData, BriefingTopic, BriefingLocation } from '../types';
 
-
-export const generateScript = async (topic: string): Promise<BriefingData> => {
-    const response = await fetch('http://localhost:8000/generate-script', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ topic }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to generate script: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    
-    try {
-        // Parse the JSON response from Grok
-        const parsed = JSON.parse(data.script);
-        
-        // Transform into BriefingData structure
-        return {
-            id: `briefing_${Date.now()}`,
-            topic: 'tech' as BriefingTopic,
-            generated_at: new Date().toISOString(),
-            headline: parsed.headline || topic,
-            summary: parsed.summary || "Generated content from Grok AI",
-            status: "confirmed",
-            video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-            script: {
-                headline: parsed.headline || topic,
-                confirmed_facts: parsed.confirmed_facts || [],
-                unconfirmed_claims: parsed.unconfirmed_claims || [],
-                recent_changes: parsed.recent_changes || [],
-                watch_next: parsed.watch_next || []
-            },
-            sources: (parsed.sources || []).map((source: any) => ({
-                account_handle: source.account_handle || `@user_${Math.random().toString(36).substr(2, 9)}`,
-                display_name: source.display_name || "Source",
-                excerpt: source.excerpt || "",
-                time_ago: source.time_ago || "just now",
-                post_url: source.post_url || "https://x.com",
-                label: source.label || "official"
-            })).slice(0, 5)
-        };
-    } catch (e) {
-        // Fallback if JSON parsing fails
-        return {
-            id: `briefing_${Date.now()}`,
-            topic: 'tech' as BriefingTopic,
-            generated_at: new Date().toISOString(),
-            headline: topic,
-            summary: data.script || "Generated content from Grok AI",
-            status: "confirmed",
-            video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-            script: {
-                headline: topic,
-                confirmed_facts: [data.script || "Content generated"],
-                unconfirmed_claims: [],
-                recent_changes: [],
-                watch_next: []
-            },
-            sources: []
-        };
-    }
-};
-
 const parseBriefing = (topic: BriefingTopic, content: string): BriefingData => {
     try {
         const parsed = JSON.parse(content);
@@ -75,10 +8,10 @@ const parseBriefing = (topic: BriefingTopic, content: string): BriefingData => {
             id: `briefing_${Date.now()}`,
             topic,
             generated_at: new Date().toISOString(),
-            headline: parsed.headline || topic,
-            summary: parsed.summary || "Generated briefing from Grok AI",
+            headline: parsed.headline || "Briefing Generated",
+            summary: parsed.summary || "",
             status: "confirmed",
-            video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+            video_url: "",
             script: {
                 headline: parsed.headline || topic,
                 confirmed_facts: parsed.confirmed_facts || [],
@@ -100,7 +33,8 @@ const parseBriefing = (topic: BriefingTopic, content: string): BriefingData => {
                 type: item.type || "image",
                 caption: item.caption || "Related content",
                 sourceUrl: item.sourceUrl || undefined
-            })).slice(0, 6)
+            })).slice(0, 6),
+            audio_url: parsed.audio_url || ""
         };
     } catch (e) {
         return {
@@ -123,21 +57,58 @@ const parseBriefing = (topic: BriefingTopic, content: string): BriefingData => {
     }
 };
 
-export const generateBriefing = async (topic: BriefingTopic): Promise<BriefingData> => {
-    const response = await fetch('http://localhost:8000/generate-briefing', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ topic }),
-    });
+export const generateScript = async (topic: string): Promise<BriefingData> => {
+    try {
+        const response = await fetch('http://localhost:8000/generate-script', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ topic }),
+        });
 
-    if (!response.ok) {
-        throw new Error(`Failed to generate briefing: ${response.statusText}`);
+        if (!response.ok) {
+            throw new Error(`Failed to generate script: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        // Ensure parsing consistency
+        return parseBriefing('tech' as BriefingTopic, data.script);
+
+    } catch (error) {
+        console.error("API Error:", error);
+        throw error;
     }
+};
 
-    const data = await response.json();
-    return parseBriefing(topic, data.script);
+export const generateBriefing = async (topic: BriefingTopic): Promise<BriefingData> => {
+    try {
+        const response = await fetch('http://localhost:8000/generate-briefing', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ topic }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to generate briefing: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const briefing = parseBriefing(topic, data.script);
+
+        // Add audio URL if present (from the backend response, not the inner script JSON)
+        if (data.audio_url) {
+            briefing.audio_url = data.audio_url;
+        }
+
+        return briefing;
+    } catch (error) {
+        console.error("API Error:", error);
+        throw error;
+    }
 };
 
 export const streamBriefing = (
@@ -162,7 +133,7 @@ export const streamBriefing = (
         try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'chunk' && msg.content) {
-                // Don't show raw JSON chunks in thinking - only show in final result
+                // Don't show raw JSON chunks
             } else if (msg.type === 'thinking' && msg.content) {
                 handlers.onChunk?.(msg.content);
             } else if (msg.type === 'tool' && msg.content) {
@@ -170,7 +141,13 @@ export const streamBriefing = (
             } else if (msg.type === 'status' && msg.content) {
                 handlers.onChunk?.(msg.content);
             } else if (msg.type === 'result') {
-                handlers.onResult?.(parseBriefing(topic, msg.content || ''));
+                const briefing = parseBriefing(topic, msg.content || '');
+                handlers.onResult?.(briefing);
+            } else if (msg.type === 'audio_ready') {  // ✅ NEW
+                // Update the briefing with audio URL
+                handlers.onChunk?.(`\n✅ Audio ready!\n`);
+                // You'll need to pass this back or update state
+                // For now, you could emit a custom event or callback
             } else if (msg.type === 'error') {
                 handlers.onError?.(msg.message || 'Unknown error');
             }

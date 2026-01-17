@@ -87,26 +87,30 @@ async def text_to_speech(text: str, voice: str = "Ara"):
     return audio_bytes
 
 # Usage
-async def generate_audio(script: str):
-    audio_data = await text_to_speech(script, voice="Ara")
+async def generate_audio(script: list, output_filename: str = "output.wav") -> str:
+    """
+    Generates audio from the script and saves it to the specified filename in the audio/ directory.
+    Returns the relative path to the audio file.
+    """
+    full_script = ""
+    for item in script:
+        full_script += item["narration"] + " "
+        
+    audio_data = await text_to_speech(full_script, voice="Ara")
+    
+    # Ensure audio directory exists
+    if not os.path.exists("audio"):
+        os.makedirs("audio")
+        
+    file_path = os.path.join("audio", output_filename)
     
     # Save to file
-    with open("audio/output.wav", "wb") as f:
-        # Write WAV header for 24kHz PCM16
-        import wave
-        with wave.open("audio/output.wav", "wb") as wav:
-            wav.setnchannels(1)  # Mono
-            wav.setsampwidth(2)  # 16-bit
-            wav.setframerate(24000)  # 24kHz
-            wav.writeframes(audio_data)
+    import wave
+    with wave.open(file_path, "wb") as wav:
+        wav.setnchannels(1)  # Mono
+        wav.setsampwidth(2)  # 16-bit
+        wav.setframerate(24000)  # 24kHz
+        wav.writeframes(audio_data)
     
-    print("Audio saved to audio/output.wav")
-
-with open("test_json.json", "r") as f:
-    data = json.load(f)
-script = generate_script(data)
-full_script = ""
-for item in script:
-    full_script += item["narration"]
-
-asyncio.run(generate_audio(full_script))
+    print(f"Audio saved to {file_path}")
+    return f"/audio/{output_filename}"

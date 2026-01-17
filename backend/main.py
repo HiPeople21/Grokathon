@@ -1,11 +1,18 @@
 import os
+import json
+import uuid
+import asyncio
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from xai_sdk import Client
 from xai_sdk.chat import user
 from xai_sdk.tools import x_search
+
+from script_gen import generate_script as create_script_from_briefing  # Rename to avoid conflict
+from audio_gen import generate_audio
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import json
@@ -57,6 +64,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve audio files
+if not os.path.exists("audio"):
+    os.makedirs("audio")
+app.mount("/audio", StaticFiles(directory="audio"), name="audio")
+
 client = Client(api_key=os.getenv("XAI_API_KEY"))
 executor = ThreadPoolExecutor(max_workers=4)
 
@@ -70,15 +82,18 @@ class BriefingRequest(BaseModel):
     topic: str
 
 class BriefingResponse(BaseModel):
-    script: str
+    script: str # This is the JSON string of the briefing
+    audio_url: str
 
 @app.post("/generate-briefing", response_model=BriefingResponse)
 async def generate_briefing(request: BriefingRequest):
-    """Generate a news briefing using Grok API based on the given topic."""
+    """Generate a news briefing, script, and audio podcast."""
     if not os.getenv("XAI_API_KEY"):
         raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
     
     try:
+        # 1. Generate Briefing Content (JSON text)
+        # print(f"Step 1: Generating briefing for '{request.topic}'...")
         chat = client.chat.create(
             model="grok-4-1-fast",
             tools=[x_search(enable_image_understanding=True, enable_video_understanding=True)],
@@ -111,8 +126,6 @@ async def generate_briefing(request: BriefingRequest):
 }
 CRITICAL: Include ONLY 2-3 images from X (pbs.twimg.com URLs). Do NOT include any videos in the response. Return images only."""
         chat.append(user(prompt_text))
-        
-        # User request
         chat.append(user(f"Generate a news briefing for: {request.topic}"))
         
         # Stream and collect response
@@ -121,14 +134,71 @@ CRITICAL: Include ONLY 2-3 images from X (pbs.twimg.com URLs). Do NOT include an
             if chunk.content:
                 content += chunk.content
 
-        print(content)
+        print(f"✓ Briefing generated: {len(content)} chars")
+
+        # Filter out invalid media
+        filtered_content = filter_x_videos(content)
+
+        # 2. Parse the briefing JSON
+        print("Step 2: Parsing briefing JSON...")
+        briefing_json = json.loads(filtered_content)
+        print("✓ Briefing JSON parsed successfully")
         
-        # Filter out X videos before returning
-        content = filter_x_videos(content)
+        # 3. Generate Script from Briefing
+        print("Step 3: Generating podcast script from briefing...")
+        script_segments = create_script_from_briefing(briefing_json)
+        print(f"✓ Generated {len(script_segments) if script_segments else 0} script segments")
         
-        return BriefingResponse(script=content)
+        # 4. Generate Audio from Script
+        full_audio_url = ""
+        if script_segments:
+            print("Step 4: Generating audio from script...")
+            filename = f"podcast_{uuid.uuid4().hex}.wav"
+            audio_path = await generate_audio(script_segments, filename)
+            full_audio_url = f"http://localhost:8000{audio_path}"
+            print(f"✓ Audio generated: {full_audio_url}")
+        else:
+            print("⚠ No script segments - skipping audio generation")
+        
+        # 5. Return both briefing and audio
+        print("Step 5: Returning briefing + audio URL")
+        return BriefingResponse(script=filtered_content, audio_url=full_audio_url)
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON parsing error: {e}")
+        raise HTTPException(status_code=500, detail=f"Invalid JSON in briefing: {str(e)}")
     except Exception as e:
+        print(f"❌ Error: {e}")
         raise HTTPException(status_code=500, detail=f"Error generating briefing: {str(e)}")
+
+
+@app.post("/generate-script", response_model=VideoScriptResponse)
+async def generate_script_endpoint(request: VideoScriptRequest):  # ✅ Renamed to avoid conflict
+    """Generate a video script using Grok API based on the given topic."""
+    if not os.getenv("XAI_API_KEY"):
+        raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
+    
+    try:
+        chat = client.chat.create(
+            model="grok-4-1-fast",
+            tools=[x_search(enable_image_understanding=True, enable_video_understanding=True)],
+            include=["verbose_streaming"],
+        )
+        
+        chat.append(
+            user("You are an expert video scriptwriter and researcher. Return ONLY valid JSON with this structure: {\"headline\": \"title\", \"summary\": \"2-3 sentence overview\", \"confirmed_facts\": [\"fact1\", \"fact2\", \"fact3\"], \"unconfirmed_claims\": [\"claim1\"], \"recent_changes\": [\"change1\"], \"watch_next\": [\"topic1\"], \"script\": \"full 2-5 minute video script\"}")
+        )
+        
+        chat.append(user(f"Generate content for topic: {request.topic}"))
+        
+        script_content = ""
+        for response, chunk in chat.stream():
+            if chunk.content:
+                script_content += chunk.content
+        
+        return VideoScriptResponse(script=script_content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating script: {str(e)}")
 
 
 @app.websocket("/ws/briefing")
@@ -156,7 +226,6 @@ async def websocket_briefing(websocket: WebSocket):
             "content": f"Starting briefing generation for '{topic}' ({location})..."
         })
 
-        # Run blocking chat.stream() in thread pool
         def run_briefing():
             chat = client.chat.create(
                 model="grok-4-1-fast",
@@ -164,7 +233,6 @@ async def websocket_briefing(websocket: WebSocket):
                 include=["verbose_streaming"],
             )
 
-            # System prompt for briefing
             prompt_text = f"""You are a news analyst covering news from {location}. Search X for images about {location}. Return ONLY valid JSON with this structure:
 {{
   "headline": "engaging title",
@@ -190,20 +258,17 @@ async def websocket_briefing(websocket: WebSocket):
 }}
 CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). Do NOT include any videos in the response. Return images only."""
             chat.append(user(prompt_text))
-
-            # User request
             chat.append(user(f"Generate a news briefing for: {topic}"))
 
-            # Stream and collect response
+            # Stream briefing generation
             content = ""
             thinking_emitted = False
             tool_searches = set()
+            
             for response, chunk in chat.stream():
                 has_reasoning = getattr(response, "usage", None) and getattr(response.usage, "reasoning_tokens", None)
                 has_content = bool(chunk.content)
-                reasoning_count = getattr(response.usage, "reasoning_tokens", 0) if has_reasoning else 0
                 
-                # Emit high-level thinking message only once
                 if has_reasoning and not thinking_emitted:
                     thinking_emitted = True
                     yield {
@@ -211,7 +276,6 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
                         "content": f"\n✨ Researching '{topic}' in {location}. Analyzing current events, finding relevant images, and compiling sources...\n"
                     }
 
-                # Surface server-side tool calls as they happen with friendly messages
                 for tool_call in chunk.tool_calls:
                     tool_name = tool_call.function.name
                     if tool_name not in tool_searches:
@@ -222,10 +286,8 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
                             if isinstance(args, dict):
                                 query = args.get("query", args.get("q", ""))
                                 if query:
-                                    # Clean up query - show first 50 chars or full if shorter
                                     display_query = query[:60] + "..." if len(query) > 60 else query
                                     
-                                    # Map tool names to friendly descriptions
                                     if "semantic" in tool_name:
                                         yield {
                                             "type": "tool",
@@ -247,17 +309,13 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
                                         "content": f"Gathering current information and visuals...\n"
                                     }
                             else:
-                                yield {
-                                    "type": "tool",
-                                    "content": f"⚙️ Processing information...\n"
-                                }
+                                yield {"type": "tool", "content": f"⚙️ Processing information...\n"}
                         except Exception as e:
                             yield {
                                 "type": "tool",
                                 "content": f"🔄 Processing information...\n"
                             }
 
-                # Send generated content chunks
                 if has_content:
                     content += chunk.content
                     yield {
@@ -267,26 +325,86 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
             
             # Filter out X videos before sending result
             filtered_content = filter_x_videos(content)
-            yield {
-                "type": "result",
-                "content": filtered_content
-            }
+            
+            # ✅ GENERATE SCRIPT AND AUDIO synchronously before sending result
+            audio_url = ""
+            try:
+                print("DEBUG: Starting script generation...", file=sys.stderr, flush=True)
+                yield {"type": "status", "content": "🎙️ Generating podcast script...\n"}
+                
+                briefing_json = json.loads(filtered_content)
+                script_segments = create_script_from_briefing(briefing_json)
+                
+                if script_segments:
+                    print(f"DEBUG: Generated {len(script_segments)} script segments", file=sys.stderr, flush=True)
+                    yield {"type": "status", "content": "🎵 Generating audio (this may take a minute)...\n"}
+                    
+                    filename = f"podcast_{uuid.uuid4().hex}.wav"
+                    
+                    # Run async generate_audio in sync context
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    audio_path = loop.run_until_complete(generate_audio(script_segments, filename))
+                    loop.close()
+                    
+                    audio_url = f"http://localhost:8000{audio_path}"
+                    print(f"DEBUG: Audio generated: {audio_url}", file=sys.stderr, flush=True)
+                    
+                    # Inject audio_url into the briefing JSON
+                    briefing_json["audio_url"] = audio_url
+                    filtered_content = json.dumps(briefing_json)
+                    
+                else:
+                    print("DEBUG: No script segments generated", file=sys.stderr, flush=True)
+                    
+            except Exception as e:
+                print(f"DEBUG: Error in script/audio generation: {e}", file=sys.stderr, flush=True)
+                # Don't fail the whole request, just log and continue without audio
+                import traceback
+                traceback.print_exc()
 
-        # Stream results back to client
-        import asyncio
-        loop = asyncio.get_event_loop()
+            # Send final briefing result (now potentially including audio_url)
+            yield {"type": "result", "content": filtered_content}
+
+        # Run in thread and stream to WebSocket
+        from queue import Queue
+        import queue
+        import threading
         
-        # Run the blocking generator in a thread pool
-        def gen_wrapper():
-            for message in run_briefing():
-                yield message
+        message_queue = Queue()
+        
+        def generator_thread():
+            try:
+                for message in run_briefing():
+                    message_queue.put(("message", message))
+            except Exception as e:
+                message_queue.put(("error", str(e)))
+            finally:
+                message_queue.put(("done", None))
+        
+        thread = threading.Thread(target=generator_thread, daemon=True)
+        thread.start()
         
         try:
-            for message in gen_wrapper():
-                if websocket.client_state.value == 1:  # CONNECTED
-                    await websocket.send_json(message)
-                    # Give the event loop a chance to process other tasks
-                    await asyncio.sleep(0)
+            while True:
+                try:
+                    msg_type, data = message_queue.get(timeout=0.1)
+                    
+                    if msg_type == "message":
+                        if websocket.client_state.value == 1:
+                            await websocket.send_json(data)
+                    elif msg_type == "error":
+                        await websocket.send_json({"type": "error", "message": data})
+                        break
+                    elif msg_type == "done":
+                        break
+                        
+                except queue.Empty:
+                    if websocket.client_state.value != 1:
+                        break
+                    continue
+                    
         except Exception as send_err:
             pass
         
@@ -295,6 +413,9 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
     except WebSocketDisconnect:
         return
     except Exception as e:
+        print(f"DEBUG: Error in websocket: {str(e)}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc()
         try:
             await websocket.send_json({"type": "error", "message": str(e)})
         finally:
