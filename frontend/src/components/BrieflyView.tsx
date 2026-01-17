@@ -1,0 +1,132 @@
+import React, { useState } from 'react';
+import { BriefingData } from '../types';
+import { SourceCard } from './SourceCard';
+import { Play, Pause, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { clsx } from 'clsx';
+
+export const BrieflyView: React.FC<{ data: BriefingData }> = ({ data }) => {
+    const [isPlaying, setIsPlaying] = useState(false);
+    const videoRef = React.useRef<HTMLVideoElement>(null);
+
+    const togglePlay = () => {
+        if (videoRef.current) {
+            if (isPlaying) videoRef.current.pause();
+            else videoRef.current.play();
+            setIsPlaying(!isPlaying);
+        }
+    };
+
+    return (
+        <div className="w-full max-w-4xl mx-auto animate-fade-in pb-20">
+
+            {/* Video Section */}
+            <div className="relative aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl mb-8 group border border-white/5">
+                <video
+                    ref={videoRef}
+                    src={data.video_url}
+                    className="w-full h-full object-cover"
+                    onEnded={() => setIsPlaying(false)}
+                    loop
+                />
+
+                {/* Overlay Controls */}
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <button
+                        onClick={togglePlay}
+                        className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform"
+                    >
+                        {isPlaying ? (
+                            <Pause className="w-8 h-8 text-white fill-current" />
+                        ) : (
+                            <Play className="w-8 h-8 text-white fill-current ml-1" />
+                        )}
+                    </button>
+                </div>
+
+                {/* Live Indicator */}
+                <div className="absolute top-4 left-4 flex items-center gap-2 px-3 py-1.5 bg-red-600/90 backdrop-blur rounded-full text-xs font-bold uppercase tracking-wider">
+                    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                    Live Update
+                </div>
+            </div>
+
+            {/* Hero Content */}
+            <div className="mb-12">
+                <div className="flex items-start justify-between gap-4 mb-4">
+                    <h1 className="text-4xl md:text-5xl font-display font-bold leading-tight bg-clip-text text-transparent bg-gradient-to-br from-white to-white/60">
+                        {data.headline}
+                    </h1>
+                    <div className={clsx(
+                        "px-4 py-2 rounded-full border text-sm font-semibold flex items-center gap-2 shrink-0",
+                        data.status === 'confirmed'
+                            ? "bg-green-500/10 border-green-500/20 text-green-400"
+                            : "bg-orange-500/10 border-orange-500/20 text-orange-400"
+                    )}>
+                        {data.status === 'confirmed' ? (
+                            <CheckCircle2 size={16} />
+                        ) : (
+                            <AlertCircle size={16} />
+                        )}
+                        <span className="uppercase tracking-wide text-xs">{data.status}</span>
+                    </div>
+                </div>
+
+                <p className="text-xl text-gray-300 leading-relaxed max-w-2xl">
+                    {data.summary}
+                </p>
+            </div>
+
+            {/* Grid Layout for Details */}
+            <div className="grid md:grid-cols-3 gap-8">
+
+                {/* Main Script Points */}
+                <div className="md:col-span-2 space-y-8">
+
+                    <section>
+                        <h3 className="text-sm font-bold uppercase text-gray-500 tracking-wider mb-4 border-b border-white/10 pb-2">
+                            Key Facts
+                        </h3>
+                        <ul className="space-y-3">
+                            {data.script.confirmed_facts.map((fact, i) => (
+                                <li key={i} className="flex gap-3 text-gray-200">
+                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-2.5 shrink-0" />
+                                    {fact}
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
+
+                    {data.script.unconfirmed_claims.length > 0 && (
+                        <section>
+                            <h3 className="text-sm font-bold uppercase text-gray-500 tracking-wider mb-4 border-b border-white/10 pb-2">
+                                Developing / Unverified
+                            </h3>
+                            <ul className="space-y-3">
+                                {data.script.unconfirmed_claims.map((claim, i) => (
+                                    <li key={i} className="flex gap-3 text-gray-400 italic">
+                                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-2.5 shrink-0" />
+                                        {claim}
+                                    </li>
+                                ))}
+                            </ul>
+                        </section>
+                    )}
+
+                </div>
+
+                {/* Sidebar sources */}
+                <div className="space-y-4">
+                    <h3 className="text-sm font-bold uppercase text-gray-500 tracking-wider mb-4 border-b border-white/10 pb-2">
+                        Sources
+                    </h3>
+                    <div className="space-y-3">
+                        {data.sources.map((source, i) => (
+                            <SourceCard key={i} source={source} />
+                        ))}
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    );
+};

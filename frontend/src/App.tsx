@@ -1,0 +1,74 @@
+import { useState } from 'react';
+import { BrieflyControls } from './components/BrieflyControls';
+import { BrieflyView } from './components/BrieflyView';
+import { generateBriefing } from './services/api';
+import { BriefingData, BriefingTopic } from './types';
+import { clsx } from 'clsx';
+
+function App() {
+    const [topic, setTopic] = useState<BriefingTopic>('global');
+    const [isLoading, setIsLoading] = useState(false);
+    const [data, setData] = useState<BriefingData | null>(null);
+
+    const handleGenerate = async () => {
+        setIsLoading(true);
+        try {
+            const result = await generateBriefing(topic);
+            setData(result);
+        } catch (error) {
+            console.error("Failed to generate briefing", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-background relative overflow-x-hidden selection:bg-blue-500/30">
+
+            {/* Dynamic Background */}
+            <div className="fixed inset-0 pointer-events-none">
+                <div className="absolute -top-[10%] left-1/4 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px]" />
+                <div className="absolute top-[20%] right-0 w-[400px] h-[400px] bg-purple-600/10 rounded-full blur-[100px]" />
+                <div className="absolute bottom-0 left-0 w-[600px] h-[400px] bg-blue-900/5 rounded-full blur-[100px]" />
+            </div>
+
+            <div className={clsx(
+                "relative z-10 min-h-screen transition-all duration-700 p-6 flex flex-col",
+                data ? "justify-start pt-12" : "justify-center items-center"
+            )}>
+
+                {/* Top Controls Bar (When data exists) */}
+                <div className={clsx(
+                    "w-full max-w-4xl mx-auto flex justify-between items-center mb-12 transition-all duration-500",
+                    data ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-10 absolute pointer-events-none"
+                )}>
+                    <div
+                        className="text-xl font-display font-bold cursor-pointer hover:opacity-80 transition-opacity"
+                        onClick={() => setData(null)}
+                    >
+                        Briefly
+                    </div>
+                    <button
+                        onClick={() => setData(null)}
+                        className="text-sm text-gray-400 hover:text-white transition-colors"
+                    >
+                        New Search
+                    </button>
+                </div>
+
+                <BrieflyControls
+                    topic={topic}
+                    setTopic={setTopic}
+                    onGenerate={handleGenerate}
+                    isLoading={isLoading}
+                    hasData={!!data}
+                />
+
+                {data && <BrieflyView data={data} />}
+
+            </div>
+        </div>
+    );
+}
+
+export default App;
