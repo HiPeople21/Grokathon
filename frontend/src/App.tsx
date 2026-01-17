@@ -1,26 +1,48 @@
 import { useState } from 'react';
 import { BrieflyControls } from './components/BrieflyControls';
 import { BrieflyView } from './components/BrieflyView';
-import { generateBriefing, generateScript } from './services/api';
-import { BriefingData, BriefingTopic, VideoScript } from './types';
+import { generateScript, streamBriefing } from './services/api';
+import { BriefingData, BriefingTopic, BriefingLocation, VideoScript } from './types';
 import { clsx } from 'clsx';
 
 function App() {
-    const [topic, setTopic] = useState<BriefingTopic>('global');
+    const [topic, setTopic] = useState<BriefingTopic>('general');
+    const [location, setLocation] = useState<BriefingLocation>('worldwide');
     const [isLoading, setIsLoading] = useState(false);
     const [data, setData] = useState<BriefingData | null>(null);
     const [scriptTopic, setScriptTopic] = useState('');
     const [generatedScript, setGeneratedScript] = useState<VideoScript | null>(null);
     const [showScriptMode, setShowScriptMode] = useState(false);
+    const [streamLog, setStreamLog] = useState('');
+    const [stopStream, setStopStream] = useState<(() => void) | null>(null);
+    const [showThinking, setShowThinking] = useState(true);
 
     const handleGenerate = async () => {
+        if (stopStream) {
+            stopStream();
+            setStopStream(null);
+        }
         setIsLoading(true);
+        setStreamLog('');
         try {
-            const result = await generateBriefing(topic);
-            setData(result);
+            const cancel = streamBriefing(topic, location, {
+                onChunk: (chunk) => setStreamLog((prev) => prev + chunk),
+                onResult: (result) => {
+                    setData(result);
+                    setIsLoading(false);
+                    setStreamLog('');
+                    setStopStream(null);
+                },
+                onError: (msg) => {
+                    console.error("Streaming error", msg);
+                    alert(msg);
+                    setIsLoading(false);
+                    setStopStream(null);
+                }
+            });
+            setStopStream(() => cancel);
         } catch (error) {
-            console.error("Failed to generate briefing", error);
-        } finally {
+            console.error("Failed to stream briefing", error);
             setIsLoading(false);
         }
     };
@@ -44,6 +66,11 @@ function App() {
         setData(null);
         setGeneratedScript(null);
         setShowScriptMode(false);
+        setStreamLog('');
+        if (stopStream) {
+            stopStream();
+            setStopStream(null);
+        }
     };
 
     return (
@@ -85,11 +112,35 @@ function App() {
                         <BrieflyControls
                             topic={topic}
                             setTopic={setTopic}
+                            location={location}
+                            setLocation={setLocation}
                             onGenerate={handleGenerate}
                             isLoading={isLoading}
                             hasData={!!data}
                             onSwitchToScript={() => setShowScriptMode(true)}
                         />
+                        {(isLoading || streamLog) && (
+                            <div className="w-full max-w-4xl mx-auto my-6">
+                                <button
+                                    onClick={() => setShowThinking(!showThinking)}
+                                    className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-400 hover:text-gray-300 transition-colors mb-2 font-semibold"
+                                >
+                                    <span>{showThinking ? '▼' : '▶'}</span>
+                                    <span>✨ AI Thinking Process</span>
+                                </button>
+                                {showThinking && (
+                                    <div className="glass-panel p-4 text-sm text-gray-300 rounded-xl border border-white/10 max-h-48 overflow-y-auto space-y-1" style={{ fontFamily: 'monospace', fontSize: '0.875rem', lineHeight: '1.5' }}>
+                                        {streamLog ? (
+                                            streamLog.split('\n').map((line, i) => (
+                                                line.trim() && <div key={i}>{line}</div>
+                                            ))
+                                        ) : (
+                                            <div className="text-gray-500 italic">Connecting...</div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
                         {data && <BrieflyView data={data} />}
                     </>
                 ) : (

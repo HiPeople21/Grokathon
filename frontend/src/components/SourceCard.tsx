@@ -3,6 +3,9 @@ import { Source } from '../types';
 import { ExternalLink, Twitter } from 'lucide-react';
 
 export const SourceCard: React.FC<{ source: Source }> = ({ source }) => {
+    const [imageError, setImageError] = React.useState(false);
+    const showFallback = !source.profile_image_url || imageError;
+
     return (
         <a
             href={source.post_url}
@@ -12,9 +15,18 @@ export const SourceCard: React.FC<{ source: Source }> = ({ source }) => {
         >
             <div className="flex justify-between items-start">
                 <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400">
-                        <Twitter size={16} />
-                    </div>
+                    {!showFallback ? (
+                        <img 
+                            src={source.profile_image_url} 
+                            alt={source.display_name}
+                            className="w-8 h-8 rounded-full object-cover"
+                            onError={() => setImageError(true)}
+                        />
+                    ) : (
+                        <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400">
+                            <Twitter size={16} />
+                        </div>
+                    )}
                     <div>
                         <div className="font-semibold text-sm text-gray-200">{source.display_name}</div>
                         <div className="text-xs text-gray-500">{source.account_handle}</div>
