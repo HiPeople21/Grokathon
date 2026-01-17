@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BriefingData } from '../types';
 import { SourceCard } from './SourceCard';
+import { MediaCarousel } from './MediaCarousel';
 import { Play, Pause, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -18,6 +19,11 @@ export const BrieflyView: React.FC<{ data: BriefingData }> = ({ data }) => {
 
     return (
         <div className="w-full max-w-4xl mx-auto animate-fade-in pb-20">
+
+            {/* Media Carousel - Above Title */}
+            {data.media && data.media.length > 0 && (
+                <MediaCarousel media={data.media} />
+            )}
 
             {/* Video Section */}
             <div className="relative aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl mb-8 group border border-white/5">

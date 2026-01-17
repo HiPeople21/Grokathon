@@ -1,10 +1,5 @@
-import { BriefingData, BriefingTopic, VideoScript } from '../types';
+import { BriefingData, BriefingTopic, BriefingLocation } from '../types';
 
-const MOCK_SOURCE_IMAGES = [
-    "https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=100&auto=format&fit=crop&q=60",
-    "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=60",
-    "https://images.unsplash.com/photo-1599566150163-29194dcaad36?w=100&auto=format&fit=crop&q=60"
-];
 
 export const generateScript = async (topic: string): Promise<BriefingData> => {
     const response = await fetch('http://localhost:8000/generate-script', {
@@ -47,7 +42,7 @@ export const generateScript = async (topic: string): Promise<BriefingData> => {
                 excerpt: source.excerpt || "",
                 time_ago: source.time_ago || "just now",
                 post_url: source.post_url || "https://x.com",
-                label: (source.label || "official") as const
+                label: source.label || "official"
             })).slice(0, 5)
         };
     } catch (e) {
@@ -72,26 +67,10 @@ export const generateScript = async (topic: string): Promise<BriefingData> => {
     }
 };
 
-export const generateBriefing = async (topic: BriefingTopic): Promise<BriefingData> => {
-    const response = await fetch('http://localhost:8000/generate-briefing', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ topic }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to generate briefing: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    
+const parseBriefing = (topic: BriefingTopic, content: string): BriefingData => {
     try {
-        // Parse the JSON response from Grok
-        const parsed = JSON.parse(data.script);
-        
-        // Transform into BriefingData structure
+        const parsed = JSON.parse(content);
+
         return {
             id: `briefing_${Date.now()}`,
             topic,
@@ -107,28 +86,34 @@ export const generateBriefing = async (topic: BriefingTopic): Promise<BriefingDa
                 recent_changes: parsed.recent_changes || [],
                 watch_next: parsed.watch_next || []
             },
-            sources: (parsed.sources || []).map((source: any) => ({
+            sources: (parsed.sources || []).map((source: any, idx: number) => ({
                 account_handle: source.account_handle || `@user_${Math.random().toString(36).substr(2, 9)}`,
                 display_name: source.display_name || "Briefing Source",
-                excerpt: source.excerpt || "",
+                excerpt: source.excerpt || parsed.confirmed_facts?.[idx] || "",
                 time_ago: source.time_ago || "just now",
                 post_url: source.post_url || "https://x.com",
-                label: (source.label || "official") as const
-            })).slice(0, 5)
+                profile_image_url: source.profile_image_url || undefined,
+                label: source.label || "official"
+            })).slice(0, 5),
+            media: (parsed.media || []).map((item: any) => ({
+                url: item.url || "",
+                type: item.type || "image",
+                caption: item.caption || "Related content",
+                sourceUrl: item.sourceUrl || undefined
+            })).slice(0, 6)
         };
     } catch (e) {
-        // Fallback if JSON parsing fails
         return {
             id: `briefing_${Date.now()}`,
             topic,
             generated_at: new Date().toISOString(),
             headline: topic,
-            summary: data.script || "Generated briefing from Grok AI",
+            summary: content || "Generated briefing from Grok AI",
             status: "confirmed",
             video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
             script: {
                 headline: topic,
-                confirmed_facts: [data.script || "Content generated"],
+                confirmed_facts: [content || "Content generated"],
                 unconfirmed_claims: [],
                 recent_changes: [],
                 watch_next: []
@@ -136,4 +121,72 @@ export const generateBriefing = async (topic: BriefingTopic): Promise<BriefingDa
             sources: []
         };
     }
+};
+
+export const generateBriefing = async (topic: BriefingTopic): Promise<BriefingData> => {
+    const response = await fetch('http://localhost:8000/generate-briefing', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ topic }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to generate briefing: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return parseBriefing(topic, data.script);
+};
+
+export const streamBriefing = (
+    topic: BriefingTopic,
+    location: BriefingLocation,
+    handlers: {
+        onChunk?: (chunk: string) => void;
+        onResult?: (data: BriefingData) => void;
+        onError?: (message: string) => void;
+    }
+) => {
+    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const host = window.location.hostname || 'localhost';
+    const ws = new WebSocket(`${protocol}://${host}:8000/ws/briefing`);
+
+    ws.onopen = () => {
+        handlers.onChunk?.('Connected. Warming up Grok...\n');
+        ws.send(JSON.stringify({ topic, location }));
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'chunk' && msg.content) {
+                // Don't show raw JSON chunks in thinking - only show in final result
+            } else if (msg.type === 'thinking' && msg.content) {
+                handlers.onChunk?.(msg.content);
+            } else if (msg.type === 'tool' && msg.content) {
+                handlers.onChunk?.(msg.content);
+            } else if (msg.type === 'status' && msg.content) {
+                handlers.onChunk?.(msg.content);
+            } else if (msg.type === 'result') {
+                handlers.onResult?.(parseBriefing(topic, msg.content || ''));
+            } else if (msg.type === 'error') {
+                handlers.onError?.(msg.message || 'Unknown error');
+            }
+        } catch (e) {
+            handlers.onError?.('Failed to parse streaming message');
+        }
+    };
+
+    ws.onerror = () => {
+        handlers.onError?.('WebSocket error');
+    };
+
+    ws.onclose = () => {
+        // Notify only if nothing arrived
+        handlers.onChunk?.('Connection closed.');
+    };
+
+    return () => ws.close();
 };
