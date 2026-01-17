@@ -35,34 +35,47 @@ Editorial rules:
 - Do NOT invent facts beyond the provided data.
 - Visual instructions should be feasible for AI image/video generation
   (maps, timelines, text cards, simple animations).
-- Avoid vague visuals like “something dramatic”.
+- Avoid vague visuals like "something dramatic".
 - Do not mention JSON, fields, or internal processing in narration.
 """
 
 
 def build_user_prompt(info: dict) -> str:
+    # Helper function to convert items to strings
+    def to_string_list(items):
+        if not items:
+            return "None"
+        result = []
+        for item in items:
+            if isinstance(item, dict):
+                # If it's a dict, try to extract a text field or convert to string
+                result.append(item.get("text", item.get("fact", item.get("claim", str(item)))))
+            else:
+                result.append(str(item))
+        return "\n- ".join(result)
+    
     return f"""
 You are given verified, structured information about current global events.
 
 Use ONLY the information below.
 
 HEADLINE:
-{info["headline"]}
+{info.get("headline", "Breaking News")}
 
 SUMMARY:
-{info["summary"]}
+{info.get("summary", "")}
 
 CONFIRMED FACTS:
-- """ + "\n- ".join(info["confirmed_facts"]) + """
+- {to_string_list(info.get("confirmed_facts", []))}
 
 UNCONFIRMED / DEVELOPING CLAIMS:
-- """ + ("\n- ".join(info["unconfirmed_claims"]) if info["unconfirmed_claims"] else "None") + """
+- {to_string_list(info.get("unconfirmed_claims", []))}
 
 RECENT CHANGES:
-- """ + ("\n- ".join(info["recent_changes"]) if info["recent_changes"] else "None") + """
+- {to_string_list(info.get("recent_changes", []))}
 
 WHAT TO WATCH NEXT:
-- """ + ("\n- ".join(info["watch_next"]) if info["watch_next"] else "None") + """
+- {to_string_list(info.get("watch_next", []))}
 
 TASK:
 Create a timed production script for a 60–90 second news briefing video.
@@ -72,14 +85,14 @@ Requirements:
 - The first segment should be a headline / opening visual.
 - Middle segments should cover confirmed facts, then unconfirmed claims (clearly labelled).
 - Include at least one segment highlighting RECENT CHANGES.
-- End with a “what to watch next” closing segment.
+- End with a "what to watch next" closing segment.
 - Ensure timestamps are continuous and non-overlapping.
 - Each segment should last 8–15 seconds.
 
 Visual guidelines:
 - Use maps for geography-related stories.
 - Use timelines for evolving events.
-- Use simple text cards for labels like “CONFIRMED” or “DEVELOPING”.
+- Use simple text cards for labels like "CONFIRMED" or "DEVELOPING".
 - Do not reference source URLs on screen.
 
 Return ONLY valid JSON.
