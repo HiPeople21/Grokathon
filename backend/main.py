@@ -11,7 +11,7 @@ from xai_sdk import Client
 from xai_sdk.chat import user
 from xai_sdk.tools import x_search
 
-from script_gen import generate_script
+from script_gen import generate_script as create_script_from_briefing  # Rename to avoid conflict
 from audio_gen import generate_audio
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -95,6 +95,7 @@ async def generate_briefing(request: BriefingRequest):
     
     try:
         # 1. Generate Briefing Content (JSON text)
+        print(f"Step 1: Generating briefing for '{request.topic}'...")
         chat = client.chat.create(
             model="grok-4-1-fast",
             tools=[x_search(enable_image_understanding=True, enable_video_understanding=True)],
@@ -127,8 +128,6 @@ async def generate_briefing(request: BriefingRequest):
 }
 CRITICAL: Include ONLY 2-3 images from X (pbs.twimg.com URLs). Do NOT include any videos in the response. Return images only."""
         chat.append(user(prompt_text))
-        
-        # User request
         chat.append(user(f"Generate a news briefing for: {request.topic}"))
         
         # Stream and collect response
@@ -137,11 +136,71 @@ CRITICAL: Include ONLY 2-3 images from X (pbs.twimg.com URLs). Do NOT include an
             if chunk.content:
                 content += chunk.content
 
-        print(content)
+        print(f"✓ Briefing generated: {len(content)} chars")
+
+        # Filter out invalid media
+        filtered_content = filter_x_videos(content)
+
+        # 2. Parse the briefing JSON
+        print("Step 2: Parsing briefing JSON...")
+        briefing_json = json.loads(filtered_content)
+        print("✓ Briefing JSON parsed successfully")
         
-        return BriefingResponse(script=content)
+        # 3. Generate Script from Briefing
+        print("Step 3: Generating podcast script from briefing...")
+        script_segments = create_script_from_briefing(briefing_json)
+        print(f"✓ Generated {len(script_segments) if script_segments else 0} script segments")
+        
+        # 4. Generate Audio from Script
+        full_audio_url = ""
+        if script_segments:
+            print("Step 4: Generating audio from script...")
+            filename = f"podcast_{uuid.uuid4().hex}.wav"
+            audio_path = await generate_audio(script_segments, filename)
+            full_audio_url = f"http://localhost:8000{audio_path}"
+            print(f"✓ Audio generated: {full_audio_url}")
+        else:
+            print("⚠ No script segments - skipping audio generation")
+        
+        # 5. Return both briefing and audio
+        print("Step 5: Returning briefing + audio URL")
+        return BriefingResponse(script=filtered_content, audio_url=full_audio_url)
+        
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON parsing error: {e}")
+        raise HTTPException(status_code=500, detail=f"Invalid JSON in briefing: {str(e)}")
     except Exception as e:
+        print(f"❌ Error: {e}")
         raise HTTPException(status_code=500, detail=f"Error generating briefing: {str(e)}")
+
+
+@app.post("/generate-script", response_model=VideoScriptResponse)
+async def generate_script_endpoint(request: VideoScriptRequest):  # ✅ Renamed to avoid conflict
+    """Generate a video script using Grok API based on the given topic."""
+    if not os.getenv("XAI_API_KEY"):
+        raise HTTPException(status_code=500, detail="XAI_API_KEY not configured")
+    
+    try:
+        chat = client.chat.create(
+            model="grok-4-1-fast",
+            tools=[x_search(enable_image_understanding=True, enable_video_understanding=True)],
+            include=["verbose_streaming"],
+        )
+        
+        chat.append(
+            user("You are an expert video scriptwriter and researcher. Return ONLY valid JSON with this structure: {\"headline\": \"title\", \"summary\": \"2-3 sentence overview\", \"confirmed_facts\": [\"fact1\", \"fact2\", \"fact3\"], \"unconfirmed_claims\": [\"claim1\"], \"recent_changes\": [\"change1\"], \"watch_next\": [\"topic1\"], \"script\": \"full 2-5 minute video script\"}")
+        )
+        
+        chat.append(user(f"Generate content for topic: {request.topic}"))
+        
+        script_content = ""
+        for response, chunk in chat.stream():
+            if chunk.content:
+                script_content += chunk.content
+        
+        return VideoScriptResponse(script=script_content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating script: {str(e)}")
 
 
 @app.websocket("/ws/briefing")
