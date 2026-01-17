@@ -60,6 +60,8 @@ async def generate_briefing(request: BriefingRequest):
         for response, chunk in chat.stream():
             if chunk.content:
                 content += chunk.content
+
+        print(content)
         
         return BriefingResponse(script=content)
     except Exception as e:
