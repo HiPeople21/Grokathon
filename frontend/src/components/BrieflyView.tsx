@@ -27,14 +27,18 @@ export const BrieflyView: React.FC<{ data: BriefingData }> = ({ data }) => {
                     src={data.video_url}
                     className="w-full h-full object-cover"
                     onEnded={() => setIsPlaying(false)}
-                    loop
+                    controls
+                    playsInline
                 />
 
-                {/* Overlay Controls */}
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {/* Overlay Controls - Only visible when paused or hovering, allows clicking through to controls */}
+                <div className={clsx(
+                    "absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity duration-300 pointer-events-none",
+                    isPlaying ? "opacity-0 group-hover:opacity-100" : "opacity-100"
+                )}>
                     <button
                         onClick={togglePlay}
-                        className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform"
+                        className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform pointer-events-auto"
                     >
                         {isPlaying ? (
                             <Pause className="w-8 h-8 text-white fill-current" />

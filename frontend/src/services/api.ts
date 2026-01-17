@@ -11,7 +11,7 @@ const parseBriefing = (topic: BriefingTopic, content: string): BriefingData => {
             headline: parsed.headline || "Briefing Generated",
             summary: parsed.summary || "",
             status: "confirmed",
-            video_url: "",
+            video_url: parsed.video_url || "",
             script: {
                 headline: parsed.headline || topic,
                 confirmed_facts: parsed.confirmed_facts || [],

@@ -13,6 +13,8 @@ from xai_sdk.tools import x_search
 
 from script_gen import generate_script as create_script_from_briefing  # Rename to avoid conflict
 from audio_gen import generate_audio
+from video_gen import generate_videos, combine_videos
+
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import json
@@ -68,6 +70,11 @@ app.add_middleware(
 if not os.path.exists("audio"):
     os.makedirs("audio")
 app.mount("/audio", StaticFiles(directory="audio"), name="audio")
+
+# Serve video files
+if not os.path.exists("videos"):
+    os.makedirs("videos")
+app.mount("/videos", StaticFiles(directory="videos"), name="videos")
 
 client = Client(api_key=os.getenv("XAI_API_KEY"))
 executor = ThreadPoolExecutor(max_workers=4)
@@ -352,6 +359,47 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
                     
                     # Inject audio_url into the briefing JSON
                     briefing_json["audio_url"] = audio_url
+                    
+                    # ✅ GENERATE VIDEO (after audio)
+                    print(f"DEBUG: Audio complete. Starting video generation...", file=sys.stderr, flush=True)
+                    yield {"type": "status", "content": "🎬 Generating video segments (this will take a few minutes)...\n"}
+                    
+                    # Run synchronous video generation
+                    # Ideally this should be async or threaded better, but sticking to simple sync integration for now
+                    # We can yield intermediate status if we modify generate_videos, but for now just yield "working on it"
+                    
+                    try:
+                        # 1. Generate individual clips
+                        video_urls = generate_videos(script_segments)
+                        
+                        # 2. Combine them
+                        yield {"type": "status", "content": "🎞️ Combining video segments...\n"}
+                        final_video_filename = f"briefing_{uuid.uuid4().hex}.mp4"
+                        final_video_path = combine_videos(video_urls, output_filename=final_video_filename)
+                        
+                        if final_video_path:
+                            # Parse filename from path to construct URL
+                            # combine_videos returns string path like "videos/briefing_xxx.mp4" (relative?) 
+                            # or absolute? It returns `output_path` which is "videos/xxx.mp4"
+                            
+                            # Just use the filename we passed
+                            video_url = f"http://localhost:8000/videos/{final_video_filename}"
+                            briefing_json["video_url"] = video_url
+                            print(f"DEBUG: Final video ready at: {video_url}", file=sys.stderr, flush=True)
+                            
+                            # Also emit a specific event for video ready if needed, 
+                            # but sending it in the final result is the primary way
+                            yield {"type": "video_ready", "url": video_url}
+                        else:
+                            print("DEBUG: Video combination failed or returned None", file=sys.stderr, flush=True)
+                            
+                    except Exception as vid_err:
+                        print(f"DEBUG: Error in video generating: {vid_err}", file=sys.stderr, flush=True)
+                        import traceback
+                        traceback.print_exc()
+                        yield {"type": "status", "content": "⚠️ Video generation failed, skipping.\n"}
+
+                    # Update content with all URLs
                     filtered_content = json.dumps(briefing_json)
                     
             except Exception as e:

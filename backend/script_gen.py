@@ -21,6 +21,7 @@ Rules:
 - Output MUST be valid JSON and nothing else.
 - Total runtime must be between 60 and 90 seconds.
 - Break the video into 5–8 chronological segments.
+- Each segment must be no longer than 15 seconds.
 - Each segment must include:
   - start_sec (integer)
   - end_sec (integer)
