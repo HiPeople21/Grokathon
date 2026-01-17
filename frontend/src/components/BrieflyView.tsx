@@ -20,11 +20,6 @@ export const BrieflyView: React.FC<{ data: BriefingData }> = ({ data }) => {
     return (
         <div className="w-full max-w-4xl mx-auto animate-fade-in pb-20">
 
-            {/* Media Carousel - Above Title */}
-            {data.media && data.media.length > 0 && (
-                <MediaCarousel media={data.media} />
-            )}
-
             {/* Video Section */}
             <div className="relative aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl mb-8 group border border-white/5">
                 <video
@@ -109,7 +104,21 @@ export const BrieflyView: React.FC<{ data: BriefingData }> = ({ data }) => {
                             {data.script.confirmed_facts.map((fact, i) => (
                                 <li key={i} className="flex gap-3 text-gray-200">
                                     <div className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-2.5 shrink-0" />
-                                    {fact}
+                                    <div className="flex-1">
+                                        <span>
+                                            {typeof fact === 'string' ? fact : fact.text}
+                                        </span>
+                                        {typeof fact === 'object' && fact.sourceUrl && (
+                                            <a
+                                                href={fact.sourceUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="ml-2 text-blue-400 hover:text-blue-300 text-xs underline transition-colors"
+                                            >
+                                                Source
+                                            </a>
+                                        )}
+                                    </div>
                                 </li>
                             ))}
                         </ul>

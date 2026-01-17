@@ -44,14 +44,12 @@ def filter_x_videos(content: str) -> str:
                     )
                     
                     if is_x_video:
-                        # print(f"DEBUG: Filtered X video: {url[:60]}...", file=sys.stderr, flush=True)
                         continue
                 
                 filtered_media.append(item)
             data["media"] = filtered_media
         return json.dumps(data)
     except Exception as e:
-        # print(f"DEBUG: Error filtering X videos: {e}", file=sys.stderr, flush=True)
         return content
 
 
@@ -107,7 +105,7 @@ async def generate_briefing(request: BriefingRequest):
 {
   "headline": "engaging title",
   "summary": "2-3 sentence overview",
-  "confirmed_facts": ["fact1", "fact2", "fact3"],
+  "confirmed_facts": [{"text": "fact1", "sourceUrl": "https://x.com/user/status/id"}, {"text": "fact2", "sourceUrl": "https://x.com/user/status/id"}],
   "unconfirmed_claims": ["claim1", "claim2"],
   "recent_changes": ["update1"],
   "watch_next": ["related_topic1", "related_topic2"],
@@ -222,16 +220,13 @@ async def websocket_briefing(websocket: WebSocket):
             await websocket.close()
             return
 
-        print(f"DEBUG: Starting briefing generation for '{topic}' in {location}", file=sys.stderr, flush=True)
-        
+        # Send status that we're starting generation
         await websocket.send_json({
             "type": "status",
             "content": f"Starting briefing generation for '{topic}' ({location})..."
         })
 
         def run_briefing():
-            """Generate briefing, then script, then audio"""
-            print(f"DEBUG: In thread, creating chat", file=sys.stderr, flush=True)
             chat = client.chat.create(
                 model="grok-4-1-fast",
                 tools=[x_search(enable_image_understanding=True, enable_video_understanding=True)],
@@ -242,7 +237,7 @@ async def websocket_briefing(websocket: WebSocket):
 {{
   "headline": "engaging title",
   "summary": "2-3 sentence overview",
-  "confirmed_facts": ["fact1", "fact2", "fact3"],
+    "confirmed_facts": [{{"text": "fact1", "sourceUrl": "https://x.com/user/status/id"}}, {{"text": "fact2", "sourceUrl": "https://x.com/user/status/id"}}],
   "unconfirmed_claims": ["claim1", "claim2"],
   "recent_changes": ["update1"],
   "watch_next": ["related_topic1", "related_topic2"],
@@ -278,13 +273,14 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
                     thinking_emitted = True
                     yield {
                         "type": "thinking",
-                        "content": f"🤔 Analyzing the topic and searching for current information...\n"
+                        "content": f"\n✨ Researching '{topic}' in {location}. Analyzing current events, finding relevant images, and compiling sources...\n"
                     }
 
                 for tool_call in chunk.tool_calls:
                     tool_name = tool_call.function.name
                     if tool_name not in tool_searches:
                         tool_searches.add(tool_name)
+                        # Show tool details in human-readable format
                         try:
                             args = json.loads(tool_call.function.arguments) if isinstance(tool_call.function.arguments, str) else tool_call.function.arguments
                             if isinstance(args, dict):
@@ -293,23 +289,41 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
                                     display_query = query[:60] + "..." if len(query) > 60 else query
                                     
                                     if "semantic" in tool_name:
-                                        yield {"type": "tool", "content": f"📚 Finding related sources on: {display_query}\n"}
+                                        yield {
+                                            "type": "tool",
+                                            "content": f"Finding sources discussing: {display_query}\n"
+                                        }
                                     elif "keyword" in tool_name:
-                                        yield {"type": "tool", "content": f"🔎 Searching keywords: {display_query}\n"}
+                                        yield {
+                                            "type": "tool",
+                                            "content": f"Searching for keywords: {display_query}\n"
+                                        }
                                     else:
-                                        yield {"type": "tool", "content": f"🔍 Searching for: {display_query}\n"}
+                                        yield {
+                                            "type": "tool",
+                                            "content": f"Searching X for images: {display_query}\n"
+                                        }
                                 else:
-                                    yield {"type": "tool", "content": f"🔍 Gathering current information...\n"}
+                                    yield {
+                                        "type": "tool",
+                                        "content": f"Gathering current information and visuals...\n"
+                                    }
                             else:
                                 yield {"type": "tool", "content": f"⚙️ Processing information...\n"}
                         except Exception as e:
-                            yield {"type": "tool", "content": f"⚙️ Processing information...\n"}
+                            yield {
+                                "type": "tool",
+                                "content": f"🔄 Processing information...\n"
+                            }
 
                 if has_content:
                     content += chunk.content
-                    yield {"type": "chunk", "content": chunk.content}
+                    yield {
+                        "type": "chunk",
+                        "content": chunk.content
+                    }
             
-            # Filter out X videos
+            # Filter out X videos before sending result
             filtered_content = filter_x_videos(content)
             
             # ✅ GENERATE SCRIPT AND AUDIO synchronously before sending result
@@ -392,12 +406,11 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
                     continue
                     
         except Exception as send_err:
-            print(f"DEBUG: Error sending message: {send_err}", file=sys.stderr, flush=True)
+            pass
         
         await websocket.close()
 
     except WebSocketDisconnect:
-        print("DEBUG: WebSocket disconnected", file=sys.stderr, flush=True)
         return
     except Exception as e:
         print(f"DEBUG: Error in websocket: {str(e)}", file=sys.stderr, flush=True)

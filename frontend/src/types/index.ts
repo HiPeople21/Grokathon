@@ -20,7 +20,7 @@ export interface Source {
 
 export interface ScriptContent {
     headline: string;
-    confirmed_facts: string[];
+    confirmed_facts: (string | { text: string; sourceUrl?: string })[];
     unconfirmed_claims: string[];
     recent_changes: string[];
     watch_next: string[];
