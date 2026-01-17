@@ -33,7 +33,8 @@ const parseBriefing = (topic: BriefingTopic, content: string): BriefingData => {
                 type: item.type || "image",
                 caption: item.caption || "Related content",
                 sourceUrl: item.sourceUrl || undefined
-            })).slice(0, 6)
+            })).slice(0, 6),
+            audio_url: parsed.audio_url || ""
         };
     } catch (e) {
         return {
@@ -132,7 +133,7 @@ export const streamBriefing = (
         try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'chunk' && msg.content) {
-                // Don't show raw JSON chunks in thinking - only show in final result
+                // Don't show raw JSON chunks
             } else if (msg.type === 'thinking' && msg.content) {
                 handlers.onChunk?.(msg.content);
             } else if (msg.type === 'tool' && msg.content) {
@@ -140,7 +141,13 @@ export const streamBriefing = (
             } else if (msg.type === 'status' && msg.content) {
                 handlers.onChunk?.(msg.content);
             } else if (msg.type === 'result') {
-                handlers.onResult?.(parseBriefing(topic, msg.content || ''));
+                const briefing = parseBriefing(topic, msg.content || '');
+                handlers.onResult?.(briefing);
+            } else if (msg.type === 'audio_ready') {  // ✅ NEW
+                // Update the briefing with audio URL
+                handlers.onChunk?.(`\n✅ Audio ready!\n`);
+                // You'll need to pass this back or update state
+                // For now, you could emit a custom event or callback
             } else if (msg.type === 'error') {
                 handlers.onError?.(msg.message || 'Unknown error');
             }

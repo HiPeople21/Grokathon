@@ -44,14 +44,14 @@ def filter_x_videos(content: str) -> str:
                     )
                     
                     if is_x_video:
-                        print(f"DEBUG: Filtered X video: {url[:60]}...", file=sys.stderr, flush=True)
+                        # print(f"DEBUG: Filtered X video: {url[:60]}...", file=sys.stderr, flush=True)
                         continue
                 
                 filtered_media.append(item)
             data["media"] = filtered_media
         return json.dumps(data)
     except Exception as e:
-        print(f"DEBUG: Error filtering X videos: {e}", file=sys.stderr, flush=True)
+        # print(f"DEBUG: Error filtering X videos: {e}", file=sys.stderr, flush=True)
         return content
 
 
@@ -95,7 +95,7 @@ async def generate_briefing(request: BriefingRequest):
     
     try:
         # 1. Generate Briefing Content (JSON text)
-        print(f"Step 1: Generating briefing for '{request.topic}'...")
+        # print(f"Step 1: Generating briefing for '{request.topic}'...")
         chat = client.chat.create(
             model="grok-4-1-fast",
             tools=[x_search(enable_image_understanding=True, enable_video_understanding=True)],
@@ -224,14 +224,13 @@ async def websocket_briefing(websocket: WebSocket):
 
         print(f"DEBUG: Starting briefing generation for '{topic}' in {location}", file=sys.stderr, flush=True)
         
-        # Send status that we're starting generation
         await websocket.send_json({
             "type": "status",
             "content": f"Starting briefing generation for '{topic}' ({location})..."
         })
 
-        # Run blocking chat.stream() in thread pool
         def run_briefing():
+            """Generate briefing, then script, then audio"""
             print(f"DEBUG: In thread, creating chat", file=sys.stderr, flush=True)
             chat = client.chat.create(
                 model="grok-4-1-fast",
@@ -239,7 +238,6 @@ async def websocket_briefing(websocket: WebSocket):
                 include=["verbose_streaming"],
             )
 
-            # System prompt for briefing
             prompt_text = f"""You are a news analyst covering news from {location}. Search X for images about {location}. Return ONLY valid JSON with this structure:
 {{
   "headline": "engaging title",
@@ -265,110 +263,134 @@ async def websocket_briefing(websocket: WebSocket):
 }}
 CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). Do NOT include any videos in the response. Return images only."""
             chat.append(user(prompt_text))
-
-            # User request
             chat.append(user(f"Generate a news briefing for: {topic}"))
 
-            # Stream and collect response
+            # Stream briefing generation
             content = ""
             thinking_emitted = False
             tool_searches = set()
-            print(f"DEBUG: Starting stream", file=sys.stderr, flush=True)
+            
             for response, chunk in chat.stream():
                 has_reasoning = getattr(response, "usage", None) and getattr(response.usage, "reasoning_tokens", None)
                 has_content = bool(chunk.content)
-                reasoning_count = getattr(response.usage, "reasoning_tokens", 0) if has_reasoning else 0
-                print(f"DEBUG: Got chunk, reasoning={reasoning_count}, content_len={len(chunk.content) if has_content else 0}", file=sys.stderr, flush=True)
                 
-                # Emit high-level thinking message only once
                 if has_reasoning and not thinking_emitted:
-                    print(f"DEBUG: Emitting thinking message", file=sys.stderr, flush=True)
                     thinking_emitted = True
                     yield {
                         "type": "thinking",
                         "content": f"🤔 Analyzing the topic and searching for current information...\n"
                     }
 
-                # Surface server-side tool calls as they happen with friendly messages
                 for tool_call in chunk.tool_calls:
                     tool_name = tool_call.function.name
                     if tool_name not in tool_searches:
                         tool_searches.add(tool_name)
-                        print(f"DEBUG: Tool call: {tool_name}", file=sys.stderr, flush=True)
-                        # Show tool details in human-readable format
                         try:
                             args = json.loads(tool_call.function.arguments) if isinstance(tool_call.function.arguments, str) else tool_call.function.arguments
                             if isinstance(args, dict):
                                 query = args.get("query", args.get("q", ""))
                                 if query:
-                                    # Clean up query - show first 50 chars or full if shorter
                                     display_query = query[:60] + "..." if len(query) > 60 else query
                                     
-                                    # Map tool names to friendly descriptions
                                     if "semantic" in tool_name:
-                                        yield {
-                                            "type": "tool",
-                                            "content": f"📚 Finding related sources on: {display_query}\n"
-                                        }
+                                        yield {"type": "tool", "content": f"📚 Finding related sources on: {display_query}\n"}
                                     elif "keyword" in tool_name:
-                                        yield {
-                                            "type": "tool",
-                                            "content": f"🔎 Searching keywords: {display_query}\n"
-                                        }
+                                        yield {"type": "tool", "content": f"🔎 Searching keywords: {display_query}\n"}
                                     else:
-                                        yield {
-                                            "type": "tool",
-                                            "content": f"🔍 Searching for: {display_query}\n"
-                                        }
+                                        yield {"type": "tool", "content": f"🔍 Searching for: {display_query}\n"}
                                 else:
-                                    yield {
-                                        "type": "tool",
-                                        "content": f"🔍 Gathering current information...\n"
-                                    }
+                                    yield {"type": "tool", "content": f"🔍 Gathering current information...\n"}
                             else:
-                                yield {
-                                    "type": "tool",
-                                    "content": f"⚙️ Processing information...\n"
-                                }
+                                yield {"type": "tool", "content": f"⚙️ Processing information...\n"}
                         except Exception as e:
-                            print(f"DEBUG: Could not parse tool args: {e}", file=sys.stderr, flush=True)
-                            yield {
-                                "type": "tool",
-                                "content": f"⚙️ Processing information...\n"
-                            }
+                            yield {"type": "tool", "content": f"⚙️ Processing information...\n"}
 
-                # Send generated content chunks
                 if has_content:
                     content += chunk.content
-                    print(f"DEBUG: Emitting content chunk, total={len(content)}", file=sys.stderr, flush=True)
-                    yield {
-                        "type": "chunk",
-                        "content": chunk.content
-                    }
+                    yield {"type": "chunk", "content": chunk.content}
             
-            print(f"DEBUG: Stream complete, final content length={len(content)}", file=sys.stderr, flush=True)
-            # Filter out X videos before sending result
+            # Filter out X videos
             filtered_content = filter_x_videos(content)
-            yield {
-                "type": "result",
-                "content": filtered_content
-            }
+            
+            # ✅ GENERATE SCRIPT AND AUDIO synchronously before sending result
+            audio_url = ""
+            try:
+                print("DEBUG: Starting script generation...", file=sys.stderr, flush=True)
+                yield {"type": "status", "content": "🎙️ Generating podcast script...\n"}
+                
+                briefing_json = json.loads(filtered_content)
+                script_segments = create_script_from_briefing(briefing_json)
+                
+                if script_segments:
+                    print(f"DEBUG: Generated {len(script_segments)} script segments", file=sys.stderr, flush=True)
+                    yield {"type": "status", "content": "🎵 Generating audio (this may take a minute)...\n"}
+                    
+                    filename = f"podcast_{uuid.uuid4().hex}.wav"
+                    
+                    # Run async generate_audio in sync context
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    audio_path = loop.run_until_complete(generate_audio(script_segments, filename))
+                    loop.close()
+                    
+                    audio_url = f"http://localhost:8000{audio_path}"
+                    print(f"DEBUG: Audio generated: {audio_url}", file=sys.stderr, flush=True)
+                    
+                    # Inject audio_url into the briefing JSON
+                    briefing_json["audio_url"] = audio_url
+                    filtered_content = json.dumps(briefing_json)
+                    
+                else:
+                    print("DEBUG: No script segments generated", file=sys.stderr, flush=True)
+                    
+            except Exception as e:
+                print(f"DEBUG: Error in script/audio generation: {e}", file=sys.stderr, flush=True)
+                # Don't fail the whole request, just log and continue without audio
+                import traceback
+                traceback.print_exc()
 
-        # Stream results back to client
-        import asyncio
-        loop = asyncio.get_event_loop()
+            # Send final briefing result (now potentially including audio_url)
+            yield {"type": "result", "content": filtered_content}
+
+        # Run in thread and stream to WebSocket
+        from queue import Queue
+        import queue
+        import threading
         
-        # Run the blocking generator in a thread pool
-        def gen_wrapper():
-            for message in run_briefing():
-                yield message
+        message_queue = Queue()
+        
+        def generator_thread():
+            try:
+                for message in run_briefing():
+                    message_queue.put(("message", message))
+            except Exception as e:
+                message_queue.put(("error", str(e)))
+            finally:
+                message_queue.put(("done", None))
+        
+        thread = threading.Thread(target=generator_thread, daemon=True)
+        thread.start()
         
         try:
-            for message in gen_wrapper():
-                if websocket.client_state.value == 1:  # CONNECTED
-                    await websocket.send_json(message)
-                    # Give the event loop a chance to process other tasks
-                    await asyncio.sleep(0)
+            while True:
+                try:
+                    msg_type, data = message_queue.get(timeout=0.1)
+                    
+                    if msg_type == "message":
+                        if websocket.client_state.value == 1:
+                            await websocket.send_json(data)
+                    elif msg_type == "error":
+                        await websocket.send_json({"type": "error", "message": data})
+                        break
+                    elif msg_type == "done":
+                        break
+                        
+                except queue.Empty:
+                    if websocket.client_state.value != 1:
+                        break
+                    continue
+                    
         except Exception as send_err:
             print(f"DEBUG: Error sending message: {send_err}", file=sys.stderr, flush=True)
         
@@ -379,6 +401,8 @@ CRITICAL: Include ONLY 2-3 images from X about {location} (pbs.twimg.com URLs). 
         return
     except Exception as e:
         print(f"DEBUG: Error in websocket: {str(e)}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc()
         try:
             await websocket.send_json({"type": "error", "message": str(e)})
         finally:
