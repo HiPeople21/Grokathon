@@ -231,5 +231,6 @@ build/
 .env.test.local
 .env.production.local
 
-# Audio files
+# Audio files and video files
 audio/*
+video/*
